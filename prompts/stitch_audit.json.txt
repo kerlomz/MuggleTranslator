@@ -1,0 +1,9 @@
+Return STRICT JSON only (one JSON object).
+Task: Find paragraphs that feel stitched/unnatural or inconsistent with nearby context.
+Output issues for TU ids that should be rewritten.
+
+Schema:
+{"issues":[{"tu_id":1,"problem":"...","rewrite_instructions":"..."}]}
+
+INPUT:
+{{tu_block}}

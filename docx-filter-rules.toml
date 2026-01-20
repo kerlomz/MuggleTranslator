@@ -1,0 +1,62 @@
+version = 1
+
+# ---------------------
+# Revision/meta cleanup
+# ---------------------
+# These attributes affect change-tracking/session metadata only.
+# Removing them does not change visible layout.
+strip_attributes = [
+  "w14:paraId",
+  "w14:textId",
+  "w:rsidR",
+  "w:rsidRDefault",
+  "w:rsidP",
+  "w:rsidRPr",
+  "w:rsidDel",
+  "w:rsidSect",
+]
+
+# ----------------
+# Non-visual marks
+# ----------------
+drop_elements = [
+  # Proofing/spellcheck markers (non-visual)
+  "w:proofErr",
+]
+
+# ---------------------------
+# Run-level micro-typography
+# ---------------------------
+# These run properties often exist only to fine-tune spacing (e.g., each word/space becomes a run),
+# which makes slot_texts extremely fragmented. We drop them and then merge adjacent runs that have
+# the same remaining rPr fingerprint.
+drop_run_properties = [
+  # Character spacing (CT_SignedTwipsMeasure)
+  "w:spacing",
+  # Text scale (percentage; CT_TextScale)
+  "w:w",
+  # Kerning (CT_HpsMeasure)
+  "w:kern",
+]
+
+# Remove whitespace-only XML text nodes unless inside these elements.
+# This strips pretty-printing/newlines in XML parts like [Content_Types].xml and styles.xml.
+preserve_whitespace_text_in = [
+  "w:t",
+  "w:delText",
+  "w:instrText",
+  "a:t",
+]
+
+# Merge adjacent <w:r> runs (only when they are simple text runs: rPr? + t)
+# after applying drop_run_properties. This reduces fragmentation while keeping major formatting.
+merge_adjacent_runs = true
+
+# Which parts should run-merge be applied to.
+# (We still apply attribute/whitespace cleanup to all XML parts.)
+merge_run_parts = [
+  "word/document.xml",
+  "word/header*.xml",
+  "word/footer*.xml",
+]
+

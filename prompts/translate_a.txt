@@ -1,0 +1,13 @@
+Translate from {{source_lang}} to {{target_lang}}.
+
+Rules:
+- Keep ALL tokens like <<MT_...>> unchanged.
+- Output ONLY the translated segments, in the same order.
+- For each TU id, output EXACTLY:
+  <<MT_SEG:000123>>
+  ...translation...
+  <<MT_END:000123>>
+- Do NOT add any other text.
+
+INPUT:
+{{tu_block}}

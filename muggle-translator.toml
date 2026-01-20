@@ -1,0 +1,69 @@
+[pipeline]
+# Backend names reference keys under [models.backends.*]
+translate_backend = "translategemma_4b"
+alt_translate_backend = "hy_mt"
+rewrite_backend = "translategemma_12b"
+controller_backend = "gemma3_4b"
+
+# Default llama.cpp runtime settings (can be overridden per-backend below).
+threads = -1
+gpu_layers = -1
+
+# Autosave progress DOCX every N translation units.
+autosave_every = 10
+autosave_suffix = "_进度.docx"
+
+# Prompt/output tracing (saved near the output DOCX).
+trace_dir = "_trace"
+trace_prompts = true
+log_max_chars = 240
+
+[prompts]
+translate_a = "prompts/translate_a.txt"
+translate_b = "prompts/translate_b.txt"
+translate_repair = "prompts/translate_repair.txt"
+para_notes = "prompts/para_notes.json.txt"
+json_repair = "prompts/json_repair.txt"
+fuse_ab = "prompts/fuse_ab.txt"
+stitch_audit = "prompts/stitch_audit.json.txt"
+patch = "prompts/patch.txt"
+
+[models]
+# Preferred model directory. Paths are resolved relative to this (and config/exe/cwd).
+model_dir = "."
+
+[models.backends.hy_mt]
+path = "HY-MT1.5-1.8B-Q8_0.gguf"
+template_hint = "hunyuan-dense"
+ctx_size = 4096
+gpu_layers = -1
+batch_size = 512
+ubatch_size = 512
+offload_kqv = true
+
+[models.backends.translategemma_4b]
+path = "translategemma-4b-it.i1-Q5_K_S.gguf"
+template_hint = "gemma"
+ctx_size = 8192
+gpu_layers = -1
+batch_size = 512
+ubatch_size = 512
+offload_kqv = true
+
+[models.backends.translategemma_12b]
+path = "translategemma-12b-it.i1-Q6_K.gguf"
+template_hint = "gemma"
+ctx_size = 8192
+gpu_layers = -1
+batch_size = 512
+ubatch_size = 512
+offload_kqv = true
+
+[models.backends.gemma3_4b]
+path = "gemma-3-4b-it.Q6_K.gguf"
+template_hint = "gemma"
+ctx_size = 16384
+gpu_layers = -1
+batch_size = 512
+ubatch_size = 512
+offload_kqv = true

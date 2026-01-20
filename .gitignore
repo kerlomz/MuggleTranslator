@@ -1,0 +1,39 @@
+# Build outputs
+/target/
+/target-dist/
+
+# Runtime logs / traces
+/_trace/
+
+# Distributions / packaging
+/dist/
+
+# Local model files (do not commit)
+*.gguf
+
+# Local llama.cpp/cuda binary bundles (environment-specific)
+/cudart-llama-bin-win-cuda-13.1-x64/
+/llama-b7772-bin-win-cuda-13.1-x64/
+/llama.cpp-b7772/
+
+# Generated artifacts from DOCX verify/filter
+/*.mask.json
+/*.offsets.json
+/*.text.json
+/*.structure.json
+/*.mask.blobs.bin
+/*.restored.docx
+/*.filtered.docx
+/*.filtered.restored.docx
+
+# Vendor archives
+*.zip
+
+# Python cache
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Local scratch outputs
+/err.txt
+/out.txt

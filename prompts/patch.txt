@@ -1,0 +1,20 @@
+Rewrite the translation of CURRENT paragraph to be natural and consistent.
+Keep ALL tokens like <<MT_...>> unchanged.
+Return ONLY the rewritten translation for CURRENT.
+
+Language: {{source_lang}} -> {{target_lang}}
+
+INSTRUCTIONS:
+{{instructions}}
+
+CONTEXT_BEFORE:
+{{before}}
+
+CURRENT_SOURCE:
+{{source}}
+
+CURRENT_TRANSLATION:
+{{current}}
+
+CONTEXT_AFTER:
+{{after}}

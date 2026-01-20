@@ -1,0 +1,12 @@
+Return STRICT JSON only (one JSON object).
+For each TU paragraph, output:
+- tu_id
+- understanding (1 concise sentence in {{target_lang}})
+- proper_nouns (strings)
+- terms (strings)
+
+Schema:
+{"paragraphs":[{"tu_id":1,"understanding":"...","proper_nouns":["..."],"terms":["..."]}]}
+
+PARAGRAPHS:
+{{tu_block}}
