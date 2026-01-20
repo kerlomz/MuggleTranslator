@@ -26,6 +26,11 @@
 /*.filtered.docx
 /*.filtered.restored.docx
 
+# Generated translation outputs
+/*_翻译*.docx
+/*_A.docx
+/*_B.docx
+
 # Vendor archives
 *.zip
 

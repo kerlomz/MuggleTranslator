@@ -46,6 +46,11 @@ pub struct PipelineSection {
     #[serde(default)]
     pub log_max_chars: Option<usize>,
 
+    /// Optional DOCX filter rules TOML. When set, the input DOCX is normalized (non-visual tags
+    /// stripped + adjacent runs merged) before extraction/translation, to reduce fragmentation.
+    #[serde(default)]
+    pub docx_filter_rules: Option<String>,
+
     /// Optional dev-only limiter: process at most N translation units.
     #[serde(default)]
     pub max_tus: Option<usize>,

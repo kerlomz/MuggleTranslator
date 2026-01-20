@@ -17,6 +17,7 @@ autosave_suffix = "_进度.docx"
 trace_dir = "_trace"
 trace_prompts = true
 log_max_chars = 240
+docx_filter_rules = "docx-filter-rules.toml"
 
 [prompts]
 translate_a = "prompts/translate_a.txt"

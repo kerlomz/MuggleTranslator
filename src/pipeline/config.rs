@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
-use crate::config::{find_default_config, load_config, resolve_backend, AppConfig, ResolvedBackend};
+use crate::config::{
+    find_default_config, load_config, resolve_backend, AppConfig, ResolvedBackend,
+};
 use crate::pipeline::prompts::{default_prompt_files, PromptSet, DEFAULT_PROMPTS_DIR};
 
 #[derive(Clone, Debug)]
@@ -26,6 +28,8 @@ pub struct PipelineConfig {
     pub trace_prompts: bool,
     pub log_max_chars: usize,
     pub max_tus: Option<usize>,
+
+    pub docx_filter_rules: Option<PathBuf>,
 
     pub prompts: PromptSet,
 }
@@ -115,9 +119,22 @@ impl PipelineConfig {
             .autosave_suffix
             .clone()
             .unwrap_or_else(|| "_进度.docx".to_string());
-        let max_tus = max_tus
-            .or(file_cfg.pipeline.max_tus)
-            .filter(|n| *n > 0);
+        let max_tus = max_tus.or(file_cfg.pipeline.max_tus).filter(|n| *n > 0);
+
+        let docx_filter_rules = file_cfg
+            .pipeline
+            .docx_filter_rules
+            .clone()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .map(|p| {
+                if p.is_relative() {
+                    cfg_path.parent().unwrap_or_else(|| Path::new(".")).join(p)
+                } else {
+                    p
+                }
+            });
 
         let threads = threads.or(file_cfg.pipeline.threads).unwrap_or(-1);
         let gpu_layers = gpu_layers.or(file_cfg.pipeline.gpu_layers).unwrap_or(-1);
@@ -153,7 +170,8 @@ impl PipelineConfig {
             )
         };
 
-        let translate_backend = resolve_with_override(&translate_backend_name, translate_model, 8192)?;
+        let translate_backend =
+            resolve_with_override(&translate_backend_name, translate_model, 8192)?;
         let alt_translate_backend = match alt_translate_backend_name.as_deref() {
             Some(n) => Some(resolve_with_override(n, alt_translate_model, 4096)?),
             None => None,
@@ -183,6 +201,7 @@ impl PipelineConfig {
             trace_prompts,
             log_max_chars,
             max_tus,
+            docx_filter_rules,
             prompts,
         })
     }
@@ -205,6 +224,12 @@ pub fn init_default_config(dir: &Path, force: bool) -> anyhow::Result<PathBuf> {
         std::fs::write(&p, body).with_context(|| format!("write prompt: {}", p.display()))?;
     }
 
+    let filter_rules_path = dir.join("docx-filter-rules.toml");
+    if !filter_rules_path.exists() || force {
+        std::fs::write(&filter_rules_path, DEFAULT_DOCX_FILTER_RULES_TOML)
+            .with_context(|| format!("write docx filter rules: {}", filter_rules_path.display()))?;
+    }
+
     if cfg_path.exists() && !force {
         return Ok(cfg_path);
     }
@@ -224,6 +249,7 @@ autosave_suffix = "_进度.docx"
 trace_dir = "_trace"
 trace_prompts = true
 log_max_chars = 240
+docx_filter_rules = "docx-filter-rules.toml"
 
 [prompts]
 translate_a = "prompts/translate_a.txt"
@@ -279,3 +305,66 @@ offload_kqv = true
         .with_context(|| format!("write config: {}", cfg_path.display()))?;
     Ok(cfg_path)
 }
+
+const DEFAULT_DOCX_FILTER_RULES_TOML: &str = r#"version = 1
+
+# ---------------------
+# Revision/meta cleanup
+# ---------------------
+# These attributes affect change-tracking/session metadata only.
+# Removing them does not change visible layout.
+strip_attributes = [
+  "w14:paraId",
+  "w14:textId",
+  "w:rsidR",
+  "w:rsidRDefault",
+  "w:rsidP",
+  "w:rsidRPr",
+  "w:rsidDel",
+  "w:rsidSect",
+]
+
+# ----------------
+# Non-visual marks
+# ----------------
+drop_elements = [
+  # Proofing/spellcheck markers (non-visual)
+  "w:proofErr",
+]
+
+# ---------------------------
+# Run-level micro-typography
+# ---------------------------
+# These run properties often exist only to fine-tune spacing (e.g., each word/space becomes a run),
+# which makes slot_texts extremely fragmented. We drop them and then merge adjacent runs that have
+# the same remaining rPr fingerprint.
+drop_run_properties = [
+  # Character spacing (CT_SignedTwipsMeasure)
+  "w:spacing",
+  # Text scale (percentage; CT_TextScale)
+  "w:w",
+  # Kerning (CT_HpsMeasure)
+  "w:kern",
+]
+
+# Remove whitespace-only XML text nodes unless inside these elements.
+# This strips pretty-printing/newlines in XML parts like [Content_Types].xml and styles.xml.
+preserve_whitespace_text_in = [
+  "w:t",
+  "w:delText",
+  "w:instrText",
+  "a:t",
+]
+
+# Merge adjacent <w:r> runs (only when they are simple text runs: rPr? + t)
+# after applying drop_run_properties. This reduces fragmentation while keeping major formatting.
+merge_adjacent_runs = true
+
+# Which parts should run-merge be applied to.
+# (We still apply attribute/whitespace cleanup to all XML parts.)
+merge_run_parts = [
+  "word/document.xml",
+  "word/header*.xml",
+  "word/footer*.xml",
+]
+"#;

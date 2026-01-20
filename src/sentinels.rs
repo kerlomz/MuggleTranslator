@@ -1,10 +1,11 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 
 pub const SEG_ID_WIDTH: usize = 6;
 pub const NT_ID_WIDTH: usize = 4;
+pub const SLOT_ID_WIDTH: usize = 6;
 
 pub const TAB: &str = "<<MT_TAB>>";
 pub const BR: &str = "<<MT_BR>>";
@@ -38,16 +39,20 @@ pub fn seg_end(seg_id: usize) -> String {
 }
 
 pub static ANY_SENTINEL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"<<MT_(?:TAB|BR|NBH|SHY|NT:\d{4}|SEG:\d{6}|END:\d{6})>>").expect("sentinel regex")
+    Regex::new(r"<<MT_(?:TAB|BR|NBH|SHY|NT:\d{4}|SEG:\d{6}|END:\d{6}|SLOT:\d{6})>>")
+        .expect("sentinel regex")
 });
 
 // Any token that looks like our internal markers. This is broader than ANY_SENTINEL_RE and is used
 // to detect/strip hallucinated <<MT_...>> tokens that should never appear unless present in source.
-pub static ANY_MT_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"<<MT_[A-Za-z0-9_:\-]{1,64}>>").expect("mt token regex")
-});
+pub static ANY_MT_TOKEN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<<MT_[A-Za-z0-9_:\-]{1,64}>>").expect("mt token regex"));
 
 pub static NT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<<MT_NT:(\d{4})>>").expect("nt regex"));
+
+pub fn slot_token(slot_id: usize) -> String {
+    format!("<<MT_SLOT:{slot_id:0SLOT_ID_WIDTH$}>>")
+}
 
 pub fn control_tokens_from_text(text: &str) -> Vec<String> {
     if text.is_empty() {
@@ -102,6 +107,52 @@ pub fn parse_segmented_output(
 
         segments.insert(seg_id, text[start_end..end_idx].to_string());
         cursor = end_idx + end_marker.len();
+    }
+    Ok(segments)
+}
+
+pub fn parse_slot_output(
+    text: &str,
+    expected_ids: &[usize],
+) -> anyhow::Result<HashMap<usize, String>> {
+    let mut segments: HashMap<usize, String> = HashMap::new();
+    if expected_ids.is_empty() {
+        return Ok(segments);
+    }
+
+    let first_marker = slot_token(expected_ids[0]);
+    let first_idx = text
+        .find(&first_marker)
+        .with_context(|| format!("missing SLOT for id={}", expected_ids[0]))?;
+    if !text[..first_idx].trim().is_empty() {
+        return Err(anyhow!("unexpected_prefix_before_first_slot"));
+    }
+
+    let mut cursor = 0usize;
+    for (i, &slot_id) in expected_ids.iter().enumerate() {
+        let marker = slot_token(slot_id);
+        let start_idx = text[cursor..]
+            .find(&marker)
+            .map(|j| cursor + j)
+            .with_context(|| format!("missing SLOT for id={slot_id}"))?;
+        let start_end = start_idx + marker.len();
+
+        let end_idx = if i + 1 < expected_ids.len() {
+            let next_marker = slot_token(expected_ids[i + 1]);
+            text[start_end..]
+                .find(&next_marker)
+                .map(|j| start_end + j)
+                .with_context(|| format!("missing SLOT for id={}", expected_ids[i + 1]))?
+        } else {
+            text.len()
+        };
+
+        segments.insert(slot_id, text[start_end..end_idx].to_string());
+        cursor = end_idx;
+    }
+
+    if cursor < text.len() && !text[cursor..].trim().is_empty() {
+        return Err(anyhow!("unexpected_suffix_after_last_slot"));
     }
     Ok(segments)
 }

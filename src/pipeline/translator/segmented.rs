@@ -4,15 +4,16 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::config::ResolvedBackend;
-use crate::docx::apply::apply_translation_unit;
-use crate::docx::package::DocxPackage;
-use crate::docx::xml::XmlPart;
+use crate::docx::pure_text::PureTextJson;
 use crate::ir::TranslationUnit;
 use crate::models::native::NativeChatModel;
 use crate::quality::{quality_heuristics, validate_translation};
 use crate::sentinels::{parse_segmented_output, seg_end, seg_start};
 
-use super::{cleanup_model_text, render_template, set_translation_slot, ParaNotes, TranslationSlot, TranslatorPipeline};
+use super::{
+    cleanup_model_text, render_template, set_translation_slot, ParaNotes, TranslationSlot,
+    TranslatorPipeline,
+};
 
 impl TranslatorPipeline {
     #[allow(clippy::too_many_arguments)]
@@ -26,9 +27,12 @@ impl TranslatorPipeline {
         repair_tmpl: &str,
         tus: &mut [TranslationUnit],
         slot: TranslationSlot,
-        parts: &mut HashMap<String, XmlPart>,
+        text_variant: &mut PureTextJson,
+        slots_by_tu: &HashMap<usize, Vec<usize>>,
+        mask_json: &Path,
+        offsets_json: &Path,
+        autosave_text_json: &Path,
         output: &Path,
-        pkg: &DocxPackage,
         indices: &[usize],
         processed: &mut usize,
     ) -> anyhow::Result<()> {
@@ -61,15 +65,30 @@ impl TranslatorPipeline {
             ],
         );
         let _ = self.trace.write_named_text(
-            &format!("{}.chunk.{first:06}-{last:06}.prompt.txt", slot.stage_name()),
+            &format!(
+                "{}.chunk.{first:06}-{last:06}.prompt.txt",
+                slot.stage_name()
+            ),
             &prompt,
         );
 
         let max_tokens = backend.ctx_size.saturating_sub(256).max(512);
-        let raw = model.chat(None, &prompt, max_tokens, 0.12, 0.9, Some(40), Some(1.05), false)?;
+        let raw = model.chat(
+            None,
+            &prompt,
+            max_tokens,
+            0.12,
+            0.9,
+            Some(40),
+            Some(1.05),
+            false,
+        )?;
         let cleaned = cleanup_model_text(&raw);
         let _ = self.trace.write_named_text(
-            &format!("{}.chunk.{first:06}-{last:06}.output.raw.txt", slot.stage_name()),
+            &format!(
+                "{}.chunk.{first:06}-{last:06}.output.raw.txt",
+                slot.stage_name()
+            ),
             &cleaned,
         );
 
@@ -87,9 +106,12 @@ impl TranslatorPipeline {
                         repair_tmpl,
                         tus,
                         slot,
-                        parts,
+                        text_variant,
+                        slots_by_tu,
+                        mask_json,
+                        offsets_json,
+                        autosave_text_json,
                         output,
-                        pkg,
                         &indices[..mid],
                         processed,
                     )?;
@@ -102,9 +124,12 @@ impl TranslatorPipeline {
                         repair_tmpl,
                         tus,
                         slot,
-                        parts,
+                        text_variant,
+                        slots_by_tu,
+                        mask_json,
+                        offsets_json,
+                        autosave_text_json,
                         output,
-                        pkg,
                         &indices[mid..],
                         processed,
                     )?;
@@ -124,20 +149,23 @@ impl TranslatorPipeline {
                 let out = cleanup_model_text(&out);
                 return self
                     .apply_translated_tu(
-                    model,
-                    backend,
-                    source_lang,
-                    target_lang,
-                    repair_tmpl,
-                    tus,
-                    slot,
-                    parts,
-                    output,
-                    pkg,
-                    idx,
-                    out,
-                    processed,
-                )
+                        model,
+                        backend,
+                        source_lang,
+                        target_lang,
+                        repair_tmpl,
+                        tus,
+                        slot,
+                        text_variant,
+                        slots_by_tu,
+                        mask_json,
+                        offsets_json,
+                        autosave_text_json,
+                        output,
+                        idx,
+                        out,
+                        processed,
+                    )
                     .with_context(|| format!("fallback segmented parse failed: {err}"));
             }
         };
@@ -153,9 +181,12 @@ impl TranslatorPipeline {
                 repair_tmpl,
                 tus,
                 slot,
-                parts,
+                text_variant,
+                slots_by_tu,
+                mask_json,
+                offsets_json,
+                autosave_text_json,
                 output,
-                pkg,
                 idx,
                 cleanup_model_text(&out),
                 processed,
@@ -175,9 +206,12 @@ impl TranslatorPipeline {
         repair_tmpl: &str,
         tus: &mut [TranslationUnit],
         slot: TranslationSlot,
-        parts: &mut HashMap<String, XmlPart>,
+        text_variant: &mut PureTextJson,
+        slots_by_tu: &HashMap<usize, Vec<usize>>,
+        mask_json: &Path,
+        offsets_json: &Path,
+        autosave_text_json: &Path,
         output: &Path,
-        pkg: &DocxPackage,
         idx: usize,
         mut out: String,
         processed: &mut usize,
@@ -185,7 +219,8 @@ impl TranslatorPipeline {
         let tu_id = tus[idx].tu_id;
         let source = tus[idx].frozen_surface.clone();
         if validate_translation(&tus[idx], &out).is_err()
-            || quality_heuristics(&tus[idx], &out, source_lang, target_lang).wants_force_retranslate()
+            || quality_heuristics(&tus[idx], &out, source_lang, target_lang)
+                .wants_force_retranslate()
         {
             let repaired = self.repair_translation(
                 model,
@@ -201,14 +236,46 @@ impl TranslatorPipeline {
             out = source.clone();
         }
 
+        let slots = slots_by_tu.get(&tu_id).cloned().unwrap_or_default();
+        if !slots.is_empty() {
+            if self
+                .apply_slot_translation(text_variant, &slots, &tus[idx], &out)
+                .is_err()
+            {
+                let repaired = self.repair_translation(
+                    model,
+                    repair_tmpl,
+                    source_lang,
+                    target_lang,
+                    &source,
+                    &out,
+                )?;
+                out = repaired;
+                if validate_translation(&tus[idx], &out).is_err()
+                    || self
+                        .apply_slot_translation(text_variant, &slots, &tus[idx], &out)
+                        .is_err()
+                {
+                    out = source.clone();
+                    let _ = self.apply_slot_translation(text_variant, &slots, &tus[idx], &out);
+                }
+            }
+        }
+
         set_translation_slot(&mut tus[idx], slot, out.clone(), &backend.name);
-        apply_translation_unit(parts, &tus[idx], &out)
-            .with_context(|| format!("apply {} tu_id={}", slot.stage_name(), tu_id))?;
 
         *processed += 1;
         if *processed % self.cfg.autosave_every == 0 {
             let total = tus.len().max(1);
-            let _ = self.write_progress_docx(pkg, output, parts, *processed, total);
+            let _ = self.write_progress_docx(
+                mask_json,
+                offsets_json,
+                autosave_text_json,
+                output,
+                text_variant,
+                *processed,
+                total,
+            );
         }
         Ok(())
     }
@@ -316,16 +383,9 @@ impl TranslatorPipeline {
                     out = out[..i].to_string();
                 }
                 let out = cleanup_model_text(&out);
-                return self.apply_fused_tu(
-                    model,
-                    repair_tmpl,
-                    source_lang,
-                    target_lang,
-                    tus,
-                    idx,
-                    out,
-                )
-                .with_context(|| format!("fallback segmented parse failed: {err}"));
+                return self
+                    .apply_fused_tu(model, repair_tmpl, source_lang, target_lang, tus, idx, out)
+                    .with_context(|| format!("fallback segmented parse failed: {err}"));
             }
         };
 
@@ -363,7 +423,8 @@ impl TranslatorPipeline {
             .unwrap_or_else(|| source.clone());
 
         if validate_translation(&tus[idx], &out).is_err()
-            || quality_heuristics(&tus[idx], &out, source_lang, target_lang).wants_force_retranslate()
+            || quality_heuristics(&tus[idx], &out, source_lang, target_lang)
+                .wants_force_retranslate()
         {
             let repaired = self.repair_translation(
                 model,
