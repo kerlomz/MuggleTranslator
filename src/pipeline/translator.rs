@@ -152,8 +152,9 @@ impl TranslatorPipeline {
 
         // Translate A
         let translate_backend = self.cfg.translate_backend.clone();
-        let prompt_translate_a = self.cfg.prompts.translate_a.clone();
-        let prompt_translate_repair = self.cfg.prompts.translate_repair.clone();
+        let translate_prompts = self.cfg.prompts.for_backend(&translate_backend.name);
+        let prompt_translate_a = translate_prompts.translate_a.clone();
+        let prompt_translate_repair = translate_prompts.translate_repair.clone();
         self.progress
             .info(format!("Translate A: {}", translate_backend.name));
         let mut text_a: PureTextJson = source_text.clone();
@@ -183,8 +184,9 @@ impl TranslatorPipeline {
 
         // Translate B
         if let Some(alt) = self.cfg.alt_translate_backend.clone() {
-            let prompt_translate_b = self.cfg.prompts.translate_b.clone();
-            let prompt_translate_repair = self.cfg.prompts.translate_repair.clone();
+            let alt_prompts = self.cfg.prompts.for_backend(&alt.name);
+            let prompt_translate_b = alt_prompts.translate_b.clone();
+            let prompt_translate_repair = alt_prompts.translate_repair.clone();
             self.progress.info(format!("Translate B: {}", alt.name));
             let mut text_b: PureTextJson = source_text.clone();
             self.translate_stage(
@@ -523,7 +525,16 @@ impl TranslatorPipeline {
             ],
         );
         let max_tokens = ((source_frozen.len() as u32) / 2).clamp(512, 4096);
-        let out = model.chat(None, &prompt, max_tokens, 0.1, 0.9, Some(40), Some(1.05), false)?;
+        let out = model.chat(
+            None,
+            &prompt,
+            max_tokens,
+            0.1,
+            0.9,
+            Some(40),
+            Some(1.05),
+            false,
+        )?;
         Ok(cleanup_model_text(&out))
     }
 
@@ -536,7 +547,9 @@ impl TranslatorPipeline {
         notes: &HashMap<usize, ParaNotes>,
     ) -> anyhow::Result<()> {
         let mut model = load_model(&self.cfg, agent_backend)?;
-        let repair_tmpl = self.cfg.prompts.translate_repair.clone();
+        let agent_prompts = self.cfg.prompts.for_backend(&agent_backend.name);
+        let fuse_tmpl = agent_prompts.fuse_ab.clone();
+        let repair_tmpl = agent_prompts.translate_repair.clone();
 
         // Default non-paragraph to A.
         for tu in tus.iter_mut() {
@@ -580,6 +593,7 @@ impl TranslatorPipeline {
             if !chunk.is_empty() && (used + add > max_chars || chunk.len() >= max_items) {
                 self.fuse_chunk_recursive(
                     &mut model,
+                    &fuse_tmpl,
                     &repair_tmpl,
                     source_lang,
                     target_lang,
@@ -597,6 +611,7 @@ impl TranslatorPipeline {
         if !chunk.is_empty() {
             self.fuse_chunk_recursive(
                 &mut model,
+                &fuse_tmpl,
                 &repair_tmpl,
                 source_lang,
                 target_lang,

@@ -5,7 +5,7 @@ use anyhow::Context;
 use crate::config::{
     find_default_config, load_config, resolve_backend, AppConfig, ResolvedBackend,
 };
-use crate::pipeline::prompts::{default_prompt_files, PromptSet, DEFAULT_PROMPTS_DIR};
+use crate::pipeline::prompts::{default_prompt_files, PromptCatalog, DEFAULT_PROMPTS_DIR};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PipelineMode {
@@ -48,7 +48,7 @@ pub struct PipelineConfig {
 
     pub docx_filter_rules: Option<PathBuf>,
 
-    pub prompts: PromptSet,
+    pub prompts: PromptCatalog,
 }
 
 impl PipelineConfig {
@@ -218,7 +218,21 @@ impl PipelineConfig {
             None => None,
         };
 
-        let prompts = PromptSet::load(&cfg_path, &file_cfg).context("load prompts")?;
+        let mut prompt_backends: Vec<String> = Vec::new();
+        prompt_backends.push(translate_backend.name.clone());
+        if let Some(b) = alt_translate_backend.as_ref() {
+            prompt_backends.push(b.name.clone());
+        }
+        if let Some(b) = rewrite_backend.as_ref() {
+            prompt_backends.push(b.name.clone());
+        }
+        if let Some(b) = controller_backend.as_ref() {
+            prompt_backends.push(b.name.clone());
+        }
+        prompt_backends.sort();
+        prompt_backends.dedup();
+        let prompts =
+            PromptCatalog::load(&cfg_path, &file_cfg, &prompt_backends).context("load prompts")?;
 
         Ok(Self {
             workdir,
@@ -255,6 +269,37 @@ pub fn init_default_config(dir: &Path, force: bool) -> anyhow::Result<PathBuf> {
 
     for (fname, body) in default_prompt_files() {
         let p = prompts_dir.join(fname);
+        if p.exists() && !force {
+            continue;
+        }
+        std::fs::write(&p, body).with_context(|| format!("write prompt: {}", p.display()))?;
+    }
+
+    // Optional per-backend prompt templates (referenced by commented sections in the config).
+    let backend_prompts: [(&str, &str); 4] = [
+        (
+            "backends/hy_mt/translate_a.txt",
+            include_str!("../../prompts/backends/hy_mt/translate_a.txt"),
+        ),
+        (
+            "backends/hy_mt/translate_repair.txt",
+            include_str!("../../prompts/backends/hy_mt/translate_repair.txt"),
+        ),
+        (
+            "backends/translategemma/translate_a.txt",
+            include_str!("../../prompts/backends/translategemma/translate_a.txt"),
+        ),
+        (
+            "backends/translategemma/translate_repair.txt",
+            include_str!("../../prompts/backends/translategemma/translate_repair.txt"),
+        ),
+    ];
+    for (rel, body) in backend_prompts {
+        let p = prompts_dir.join(rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create prompts dir: {}", parent.display()))?;
+        }
         if p.exists() && !force {
             continue;
         }
@@ -313,6 +358,12 @@ batch_size = 512
 ubatch_size = 512
 offload_kqv = true
 
+# Optional: bind prompts to this backend (different models follow different prompt styles).
+# [models.backends.hy_mt.prompts]
+# translate_a = "prompts/backends/hy_mt/translate_a.txt"
+# translate_b = "prompts/backends/hy_mt/translate_a.txt"
+# translate_repair = "prompts/backends/hy_mt/translate_repair.txt"
+
 [models.backends.translategemma_4b]
 path = "translategemma-4b-it.i1-Q5_K_S.gguf"
 template_hint = "gemma"
@@ -321,6 +372,12 @@ gpu_layers = -1
 batch_size = 512
 ubatch_size = 512
 offload_kqv = true
+
+# Optional:
+# [models.backends.translategemma_4b.prompts]
+# translate_a = "prompts/backends/translategemma/translate_a.txt"
+# translate_b = "prompts/backends/translategemma/translate_a.txt"
+# translate_repair = "prompts/backends/translategemma/translate_repair.txt"
 
 [models.backends.translategemma_12b]
 path = "translategemma-12b-it.i1-Q6_K.gguf"

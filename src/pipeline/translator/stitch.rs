@@ -126,6 +126,7 @@ impl TranslatorPipeline {
         }
 
         let mut model = load_model(&self.cfg, agent_backend)?;
+        let prompts = self.cfg.prompts.for_backend(&agent_backend.name);
         let mut all: Vec<StitchIssue> = Vec::new();
 
         for (ci, chunk) in chunks.iter().enumerate() {
@@ -149,7 +150,7 @@ impl TranslatorPipeline {
                 .join("\n");
 
             let prompt = render_template(
-                &self.cfg.prompts.stitch_audit,
+                &prompts.stitch_audit,
                 &[("tu_block", &tu_block), ("target_lang", target_lang)],
             );
             let _ = self.trace.write_named_text(
@@ -162,8 +163,7 @@ impl TranslatorPipeline {
                 &raw,
             );
 
-            let parsed =
-                parse_json_with_repair(&mut model, &self.cfg.prompts.json_repair, &raw, 1600)?;
+            let parsed = parse_json_with_repair(&mut model, &prompts.json_repair, &raw, 1600)?;
             let resp: StitchAuditResponse =
                 serde_json::from_value(parsed).context("parse stitch_audit json")?;
             all.extend(resp.issues);
@@ -185,7 +185,10 @@ impl TranslatorPipeline {
         round: usize,
     ) -> anyhow::Result<()> {
         let mut model = load_model(&self.cfg, patch_backend)?;
-        let repair_tmpl = self.cfg.prompts.translate_repair.clone();
+        let (patch_tmpl, repair_tmpl) = {
+            let prompts = self.cfg.prompts.for_backend(&patch_backend.name);
+            (prompts.patch.clone(), prompts.translate_repair.clone())
+        };
         let idx_by_id: HashMap<usize, usize> = tus
             .iter()
             .enumerate()
@@ -207,7 +210,7 @@ impl TranslatorPipeline {
                 .unwrap_or_else(|| source.clone());
 
             let prompt = render_template(
-                &self.cfg.prompts.patch,
+                &patch_tmpl,
                 &[
                     ("source_lang", source_lang),
                     ("target_lang", target_lang),

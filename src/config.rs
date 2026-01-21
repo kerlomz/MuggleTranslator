@@ -91,6 +91,13 @@ pub struct ModelBackend {
     pub ubatch_size: Option<u32>,
     #[serde(default)]
     pub offload_kqv: Option<bool>,
+    /// Optional backend-specific prompt overrides.
+    ///
+    /// Example:
+    /// [models.backends.hy_mt.prompts]
+    /// translate_a = "prompts/backends/hy_mt/translate_a.txt"
+    #[serde(default)]
+    pub prompts: PromptsSection,
 }
 
 #[derive(Clone, Debug)]

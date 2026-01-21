@@ -1,0 +1,25 @@
+SOURCE (frozen):
+{{source}}
+
+BAD_OUTPUT:
+{{bad}}
+
+请将 BAD_OUTPUT 修复为满足以下全部约束的译文，并且仅输出修复后的译文（不要输出任何解释、标题或多余文本）。
+
+语言：{{source_lang}} -> {{target_lang}}
+
+约束：
+- 不要省略内容；不要总结；不要使用“……”或“...”占位。
+- 不要添加新信息。
+- 保持所有标记如<<MT_...>>原样不变，并保持它们的相对顺序不变。
+- 保持所有数字0-9原样不变。
+- 输出必须为{{target_lang}}（不要留在{{source_lang}}）。
+
+必须保留的标记（按顺序原样复制）：
+{{must_keep_tokens}}
+
+NT map（token = original；可以复制original，但不要翻译它们）：
+{{nt_map}}
+
+上一次失败原因：
+{{validation_error}}

@@ -35,6 +35,10 @@ impl TranslatorPipeline {
         notes: &mut HashMap<usize, ParaNotes>,
     ) -> anyhow::Result<()> {
         let mut model = load_model(&self.cfg, agent_backend)?;
+        let (para_notes_tmpl, json_repair_tmpl) = {
+            let prompts = self.cfg.prompts.for_backend(&agent_backend.name);
+            (prompts.para_notes.clone(), prompts.json_repair.clone())
+        };
 
         let paras: Vec<&TranslationUnit> = tus
             .iter()
@@ -52,7 +56,14 @@ impl TranslatorPipeline {
         for tu in paras {
             let add = tu.frozen_surface.len() + 64;
             if !chunk.is_empty() && (used + add > max_chars || chunk.len() >= max_items) {
-                self.run_para_notes_chunk(&mut model, target_lang, &chunk, notes)?;
+                self.run_para_notes_chunk(
+                    &mut model,
+                    &para_notes_tmpl,
+                    &json_repair_tmpl,
+                    target_lang,
+                    &chunk,
+                    notes,
+                )?;
                 chunk.clear();
                 used = 0;
             }
@@ -60,7 +71,14 @@ impl TranslatorPipeline {
             chunk.push(tu);
         }
         if !chunk.is_empty() {
-            self.run_para_notes_chunk(&mut model, target_lang, &chunk, notes)?;
+            self.run_para_notes_chunk(
+                &mut model,
+                &para_notes_tmpl,
+                &json_repair_tmpl,
+                target_lang,
+                &chunk,
+                notes,
+            )?;
         }
         Ok(())
     }
@@ -68,6 +86,8 @@ impl TranslatorPipeline {
     fn run_para_notes_chunk(
         &mut self,
         model: &mut NativeChatModel,
+        para_notes_tmpl: &str,
+        json_repair_tmpl: &str,
         target_lang: &str,
         chunk: &[&TranslationUnit],
         notes: &mut HashMap<usize, ParaNotes>,
@@ -82,7 +102,7 @@ impl TranslatorPipeline {
             .join("\n");
 
         let prompt = render_template(
-            &self.cfg.prompts.para_notes,
+            para_notes_tmpl,
             &[("target_lang", target_lang), ("tu_block", &tu_block)],
         );
         let _ = self.trace.write_named_text(
@@ -106,8 +126,7 @@ impl TranslatorPipeline {
             &raw,
         );
 
-        let parsed = match parse_json_with_repair(model, &self.cfg.prompts.json_repair, &raw, 1800)
-        {
+        let parsed = match parse_json_with_repair(model, json_repair_tmpl, &raw, 1800) {
             Ok(v) => v,
             Err(err) => {
                 let _ = self.trace.write_named_text(

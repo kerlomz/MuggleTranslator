@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context};
@@ -49,6 +50,49 @@ impl PromptSet {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct PromptCatalog {
+    default: PromptSet,
+    by_backend: HashMap<String, PromptSet>,
+}
+
+impl PromptCatalog {
+    pub fn load(
+        config_path: &Path,
+        cfg: &AppConfig,
+        backend_names: &[String],
+    ) -> anyhow::Result<Self> {
+        let default = PromptSet::load(config_path, cfg).context("load default prompts")?;
+        let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+
+        let mut by_backend: HashMap<String, PromptSet> = HashMap::new();
+        for name in backend_names {
+            if by_backend.contains_key(name) {
+                continue;
+            }
+            let Some(backend) = cfg.models.backends.get(name) else {
+                continue;
+            };
+            let overrides = &backend.prompts;
+            if prompts_section_is_empty(overrides) {
+                continue;
+            }
+            let mut set = default.clone();
+            apply_prompt_overrides(config_dir, name, &mut set, overrides)?;
+            by_backend.insert(name.clone(), set);
+        }
+
+        Ok(Self {
+            default,
+            by_backend,
+        })
+    }
+
+    pub fn for_backend(&self, name: &str) -> &PromptSet {
+        self.by_backend.get(name).unwrap_or(&self.default)
+    }
+}
+
 fn read_prompt(
     config_dir: &Path,
     p: &PromptsSection,
@@ -78,8 +122,75 @@ fn read_prompt(
             p.display()
         ));
     }
-    let text = std::fs::read_to_string(&p).with_context(|| format!("read prompt: {}", p.display()))?;
+    let text =
+        std::fs::read_to_string(&p).with_context(|| format!("read prompt: {}", p.display()))?;
     Ok(text)
+}
+
+fn read_prompt_path(config_dir: &Path, path: &str, key: &str) -> anyhow::Result<String> {
+    let mut p = PathBuf::from(path);
+    if p.is_relative() {
+        p = config_dir.join(&p);
+    }
+    if !p.exists() {
+        return Err(anyhow!(
+            "prompt file not found for {key}: {} (run: muggle-translator --init-config)",
+            p.display()
+        ));
+    }
+    let text =
+        std::fs::read_to_string(&p).with_context(|| format!("read prompt: {}", p.display()))?;
+    Ok(text)
+}
+
+fn apply_prompt_overrides(
+    config_dir: &Path,
+    backend_name: &str,
+    out: &mut PromptSet,
+    overrides: &PromptsSection,
+) -> anyhow::Result<()> {
+    let apply = |key: &str, value: &Option<String>, field: &mut String| -> anyhow::Result<()> {
+        let Some(path) = value.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+            return Ok(());
+        };
+        *field = read_prompt_path(config_dir, path, key)
+            .with_context(|| format!("backend {backend_name} prompt override for {key}"))?;
+        Ok(())
+    };
+
+    apply("translate_a", &overrides.translate_a, &mut out.translate_a)?;
+    apply("translate_b", &overrides.translate_b, &mut out.translate_b)?;
+    apply(
+        "translate_repair",
+        &overrides.translate_repair,
+        &mut out.translate_repair,
+    )?;
+    apply("para_notes", &overrides.para_notes, &mut out.para_notes)?;
+    apply("json_repair", &overrides.json_repair, &mut out.json_repair)?;
+    apply("fuse_ab", &overrides.fuse_ab, &mut out.fuse_ab)?;
+    apply(
+        "stitch_audit",
+        &overrides.stitch_audit,
+        &mut out.stitch_audit,
+    )?;
+    apply("patch", &overrides.patch, &mut out.patch)?;
+
+    Ok(())
+}
+
+fn prompts_section_is_empty(p: &PromptsSection) -> bool {
+    p.translate_a.as_deref().unwrap_or("").trim().is_empty()
+        && p.translate_b.as_deref().unwrap_or("").trim().is_empty()
+        && p.translate_repair
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+        && p.para_notes.as_deref().unwrap_or("").trim().is_empty()
+        && p.json_repair.as_deref().unwrap_or("").trim().is_empty()
+        && p.fuse_ab.as_deref().unwrap_or("").trim().is_empty()
+        && p.stitch_audit.as_deref().unwrap_or("").trim().is_empty()
+        && p.patch.as_deref().unwrap_or("").trim().is_empty()
 }
 
 pub fn render_template(template: &str, vars: &[(&str, &str)]) -> String {

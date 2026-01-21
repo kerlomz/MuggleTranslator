@@ -302,6 +302,7 @@ impl TranslatorPipeline {
     pub(super) fn fuse_chunk_recursive(
         &mut self,
         model: &mut NativeChatModel,
+        fuse_tmpl: &str,
         repair_tmpl: &str,
         source_lang: &str,
         target_lang: &str,
@@ -351,7 +352,7 @@ impl TranslatorPipeline {
 
         let target_lang_label = lang_label(target_lang);
         let prompt = render_template(
-            &self.cfg.prompts.fuse_ab,
+            fuse_tmpl,
             &[("target_lang", &target_lang_label), ("tu_block", &tu_block)],
         );
         let _ = self.trace.write_named_text(
@@ -373,6 +374,7 @@ impl TranslatorPipeline {
                     let mid = indices.len() / 2;
                     self.fuse_chunk_recursive(
                         model,
+                        fuse_tmpl,
                         repair_tmpl,
                         source_lang,
                         target_lang,
@@ -382,6 +384,7 @@ impl TranslatorPipeline {
                     )?;
                     self.fuse_chunk_recursive(
                         model,
+                        fuse_tmpl,
                         repair_tmpl,
                         source_lang,
                         target_lang,

@@ -46,6 +46,12 @@ batch_size = 512
 ubatch_size = 512
 offload_kqv = true
 
+# Optional: bind prompts to this backend (different models follow different prompt styles).
+# [models.backends.hy_mt.prompts]
+# translate_a = "prompts/backends/hy_mt/translate_a.txt"
+# translate_b = "prompts/backends/hy_mt/translate_a.txt"
+# translate_repair = "prompts/backends/hy_mt/translate_repair.txt"
+
 [models.backends.translategemma_4b]
 path = "translategemma-4b-it.i1-Q5_K_S.gguf"
 template_hint = "gemma"
@@ -54,6 +60,12 @@ gpu_layers = -1
 batch_size = 512
 ubatch_size = 512
 offload_kqv = true
+
+# Optional:
+# [models.backends.translategemma_4b.prompts]
+# translate_a = "prompts/backends/translategemma/translate_a.txt"
+# translate_b = "prompts/backends/translategemma/translate_a.txt"
+# translate_repair = "prompts/backends/translategemma/translate_repair.txt"
 
 [models.backends.translategemma_12b]
 path = "translategemma-12b-it.i1-Q6_K.gguf"

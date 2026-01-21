@@ -23,7 +23,11 @@ use super::super::memory::{build_memory, write_memory_file, ParaNotes};
 use super::{cleanup_model_text, load_model, render_template, TranslatorPipeline};
 
 impl TranslatorPipeline {
-    pub(super) fn translate_docx_basic(&mut self, input: &Path, output: &Path) -> anyhow::Result<()> {
+    pub(super) fn translate_docx_basic(
+        &mut self,
+        input: &Path,
+        output: &Path,
+    ) -> anyhow::Result<()> {
         self.progress
             .info(format!("Pipeline mode: basic (translate_backend only)"));
         self.progress
@@ -83,8 +87,10 @@ impl TranslatorPipeline {
         self.progress
             .info(format!("Translate backend: {}", translate_backend.name));
         let mut model = load_model(&self.cfg, &translate_backend)?;
-        let prompt_translate_a = self.cfg.prompts.translate_a.clone();
-        let prompt_translate_repair = self.cfg.prompts.translate_repair.clone();
+        let translate_prompts = self.cfg.prompts.for_backend(&translate_backend.name);
+        let prompt_translate_a = translate_prompts.translate_a.clone();
+        let prompt_translate_b = translate_prompts.translate_b.clone();
+        let prompt_translate_repair = translate_prompts.translate_repair.clone();
 
         // A: translate slot_texts (used to render the output DOCX)
         let mut ordered_slot_ids: Vec<usize> = Vec::new();
@@ -203,7 +209,7 @@ impl TranslatorPipeline {
             &source_lang,
             &target_lang,
             "translate_b(paragraphs)",
-            &prompt_translate_a,
+            &prompt_translate_b,
             &prompt_translate_repair,
             &mut tus_paras,
             &mut |tu, out_unfrozen, _processed, _total| {
@@ -293,7 +299,9 @@ impl TranslatorPipeline {
             }
 
             let add = tus[idx].frozen_surface.len() + 64;
-            if !chunk_indices.is_empty() && (used + add > max_chars || chunk_indices.len() >= max_items) {
+            if !chunk_indices.is_empty()
+                && (used + add > max_chars || chunk_indices.len() >= max_items)
+            {
                 self.translate_chunk_recursive_basic(
                     model,
                     backend,
@@ -390,7 +398,9 @@ impl TranslatorPipeline {
             }
 
             let add = tus[idx].frozen_surface.len() + 64;
-            if !chunk_indices.is_empty() && (used + add > max_chars || chunk_indices.len() >= max_items) {
+            if !chunk_indices.is_empty()
+                && (used + add > max_chars || chunk_indices.len() >= max_items)
+            {
                 self.translate_slot_chunk_recursive_basic(
                     model,
                     backend,
@@ -695,9 +705,13 @@ impl TranslatorPipeline {
                 &report,
             );
 
-            if let Ok(forced) =
-                self.force_translate_preserving_tokens(model, backend, source_lang, target_lang, &source)
-            {
+            if let Ok(forced) = self.force_translate_preserving_tokens(
+                model,
+                backend,
+                source_lang,
+                target_lang,
+                &source,
+            ) {
                 match validate_translation(tu, &forced) {
                     Ok(()) => out = forced,
                     Err(err2) => {
@@ -773,7 +787,11 @@ impl TranslatorPipeline {
 
         let mut translations: Vec<String> = Vec::with_capacity(plain_positions.len());
         for &pos in &plain_positions {
-            let plain = match items.get(pos).cloned().unwrap_or(Item::Plain(String::new())) {
+            let plain = match items
+                .get(pos)
+                .cloned()
+                .unwrap_or(Item::Plain(String::new()))
+            {
                 Item::Plain(s) => s,
                 Item::Token(_) => String::new(),
             };
@@ -799,7 +817,16 @@ impl TranslatorPipeline {
                     "Translate the following {source_lang_label} into {target_lang_label}.\nRules:\n- Translate fully; do not omit or summarize; do not use ellipsis placeholders like … or ....\n- The marker {HOLE} indicates a non-translatable token will be inserted adjacent to it; keep {HOLE} unchanged (do not translate, delete, or add spaces).\n- Preserve all digits 0-9 exactly.\nOutput ONLY the translation:\n{decorated}\n"
                 )
             };
-            let raw = model.chat(None, &prompt, max_tokens, 0.0, 0.9, Some(40), Some(1.05), false)?;
+            let raw = model.chat(
+                None,
+                &prompt,
+                max_tokens,
+                0.0,
+                0.9,
+                Some(40),
+                Some(1.05),
+                false,
+            )?;
             let cleaned = cleanup_model_text(&raw);
             let cleaned = crate::sentinels::ANY_MT_TOKEN_RE
                 .replace_all(&cleaned, "")
@@ -906,14 +933,14 @@ impl TranslatorPipeline {
                         source_lang,
                         target_lang,
                         stage,
-                    prompt_tmpl,
-                    repair_tmpl,
-                    tus,
-                    &indices[..mid],
-                    processed,
-                    total,
-                    on_unit,
-                )?;
+                        prompt_tmpl,
+                        repair_tmpl,
+                        tus,
+                        &indices[..mid],
+                        processed,
+                        total,
+                        on_unit,
+                    )?;
                     self.translate_chunk_recursive_basic(
                         model,
                         backend,
@@ -1007,7 +1034,11 @@ impl TranslatorPipeline {
     }
 }
 
-fn apply_slot_text(text_json: &mut PureTextJson, slot_id: usize, translated: &str) -> anyhow::Result<()> {
+fn apply_slot_text(
+    text_json: &mut PureTextJson,
+    slot_id: usize,
+    translated: &str,
+) -> anyhow::Result<()> {
     if slot_id == 0 {
         return Ok(());
     }
