@@ -9,6 +9,7 @@ use crate::ir::TranslationUnit;
 use crate::models::native::NativeChatModel;
 use crate::quality::{quality_heuristics, validate_translation};
 use crate::sentinels::{parse_segmented_output, seg_end, seg_start};
+use crate::textutil::lang_label;
 
 use super::{
     cleanup_model_text, render_template, set_translation_slot, ParaNotes, TranslationSlot,
@@ -56,11 +57,13 @@ impl TranslatorPipeline {
             tu_block.push_str("\n\n");
         }
 
+        let source_lang_label = lang_label(source_lang);
+        let target_lang_label = lang_label(target_lang);
         let prompt = render_template(
             prompt_tmpl,
             &[
-                ("source_lang", source_lang),
-                ("target_lang", target_lang),
+                ("source_lang", &source_lang_label),
+                ("target_lang", &target_lang_label),
                 ("tu_block", &tu_block),
             ],
         );
@@ -218,10 +221,19 @@ impl TranslatorPipeline {
     ) -> anyhow::Result<()> {
         let tu_id = tus[idx].tu_id;
         let source = tus[idx].frozen_surface.clone();
+        let must_keep_tokens = crate::sentinels::must_keep_tokens(&source);
+        let nt_map = crate::freezer::render_nt_map_for_prompt(&tus[idx].nt_map);
+        let mut validation_error = validate_translation(&tus[idx], &out)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
         if validate_translation(&tus[idx], &out).is_err()
             || quality_heuristics(&tus[idx], &out, source_lang, target_lang)
                 .wants_force_retranslate()
         {
+            if validation_error.is_empty() {
+                validation_error = "quality_force_retranslate".to_string();
+            }
             let repaired = self.repair_translation(
                 model,
                 repair_tmpl,
@@ -229,6 +241,9 @@ impl TranslatorPipeline {
                 target_lang,
                 &source,
                 &out,
+                &must_keep_tokens,
+                &validation_error,
+                &nt_map,
             )?;
             out = repaired;
         }
@@ -242,6 +257,7 @@ impl TranslatorPipeline {
                 .apply_slot_translation(text_variant, &slots, &tus[idx], &out)
                 .is_err()
             {
+                let reason = "slot_projection_failed".to_string();
                 let repaired = self.repair_translation(
                     model,
                     repair_tmpl,
@@ -249,6 +265,9 @@ impl TranslatorPipeline {
                     target_lang,
                     &source,
                     &out,
+                    &must_keep_tokens,
+                    &reason,
+                    &nt_map,
                 )?;
                 out = repaired;
                 if validate_translation(&tus[idx], &out).is_err()
@@ -330,9 +349,10 @@ impl TranslatorPipeline {
             tu_block.push_str("\n\n");
         }
 
+        let target_lang_label = lang_label(target_lang);
         let prompt = render_template(
             &self.cfg.prompts.fuse_ab,
-            &[("target_lang", target_lang), ("tu_block", &tu_block)],
+            &[("target_lang", &target_lang_label), ("tu_block", &tu_block)],
         );
         let _ = self.trace.write_named_text(
             &format!("fuse.chunk.{first:06}-{last:06}.prompt.txt"),
@@ -417,6 +437,12 @@ impl TranslatorPipeline {
         mut out: String,
     ) -> anyhow::Result<()> {
         let source = tus[idx].frozen_surface.clone();
+        let must_keep_tokens = crate::sentinels::must_keep_tokens(&source);
+        let nt_map = crate::freezer::render_nt_map_for_prompt(&tus[idx].nt_map);
+        let mut validation_error = validate_translation(&tus[idx], &out)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
         let a = tus[idx]
             .draft_translation
             .clone()
@@ -426,6 +452,9 @@ impl TranslatorPipeline {
             || quality_heuristics(&tus[idx], &out, source_lang, target_lang)
                 .wants_force_retranslate()
         {
+            if validation_error.is_empty() {
+                validation_error = "quality_force_retranslate".to_string();
+            }
             let repaired = self.repair_translation(
                 model,
                 repair_tmpl,
@@ -433,6 +462,9 @@ impl TranslatorPipeline {
                 target_lang,
                 &source,
                 &out,
+                &must_keep_tokens,
+                &validation_error,
+                &nt_map,
             )?;
             out = repaired;
         }

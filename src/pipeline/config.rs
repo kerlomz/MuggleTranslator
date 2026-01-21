@@ -7,14 +7,31 @@ use crate::config::{
 };
 use crate::pipeline::prompts::{default_prompt_files, PromptSet, DEFAULT_PROMPTS_DIR};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineMode {
+    Basic,
+    Full,
+}
+
+impl PipelineMode {
+    pub fn parse(s: Option<&str>) -> Self {
+        match s.unwrap_or("basic").trim().to_ascii_lowercase().as_str() {
+            "full" => Self::Full,
+            _ => Self::Basic,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PipelineConfig {
     pub workdir: PathBuf,
     pub config_path: PathBuf,
 
+    pub mode: PipelineMode,
+
     pub translate_backend: ResolvedBackend,
     pub alt_translate_backend: Option<ResolvedBackend>,
-    pub rewrite_backend: ResolvedBackend,
+    pub rewrite_backend: Option<ResolvedBackend>,
     pub controller_backend: Option<ResolvedBackend>,
 
     pub threads: i32,
@@ -82,20 +99,36 @@ impl PipelineConfig {
             .clone()
             .unwrap_or_else(|| workdir.join("muggle-translator.toml"));
 
+        let mode = PipelineMode::parse(file_cfg.pipeline.mode.as_deref());
+
         let translate_backend_name = translate_backend
             .or_else(|| file_cfg.pipeline.translate_backend.clone())
             .unwrap_or_else(|| "translategemma_4b".to_string());
-        let alt_translate_backend_name = alt_translate_backend
-            .or_else(|| file_cfg.pipeline.alt_translate_backend.clone())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        let rewrite_backend_name = rewrite_backend
-            .or_else(|| file_cfg.pipeline.rewrite_backend.clone())
-            .unwrap_or_else(|| "translategemma_12b".to_string());
-        let controller_backend_name = controller_backend
-            .or_else(|| file_cfg.pipeline.controller_backend.clone())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        let alt_translate_backend_name = if mode == PipelineMode::Full {
+            alt_translate_backend
+                .or_else(|| file_cfg.pipeline.alt_translate_backend.clone())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+        let rewrite_backend_name = if mode == PipelineMode::Full {
+            Some(
+                rewrite_backend
+                    .or_else(|| file_cfg.pipeline.rewrite_backend.clone())
+                    .unwrap_or_else(|| "translategemma_12b".to_string()),
+            )
+        } else {
+            None
+        };
+        let controller_backend_name = if mode == PipelineMode::Full {
+            controller_backend
+                .or_else(|| file_cfg.pipeline.controller_backend.clone())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
 
         let output_dir = output
             .parent()
@@ -176,7 +209,10 @@ impl PipelineConfig {
             Some(n) => Some(resolve_with_override(n, alt_translate_model, 4096)?),
             None => None,
         };
-        let rewrite_backend = resolve_with_override(&rewrite_backend_name, rewrite_model, 8192)?;
+        let rewrite_backend = match rewrite_backend_name.as_deref() {
+            Some(n) => Some(resolve_with_override(n, rewrite_model, 8192)?),
+            None => None,
+        };
         let controller_backend = match controller_backend_name.as_deref() {
             Some(n) => Some(resolve_with_override(n, controller_model, 16384)?),
             None => None,
@@ -187,6 +223,7 @@ impl PipelineConfig {
         Ok(Self {
             workdir,
             config_path: cfg_path,
+            mode,
             translate_backend,
             alt_translate_backend,
             rewrite_backend,
@@ -235,10 +272,13 @@ pub fn init_default_config(dir: &Path, force: bool) -> anyhow::Result<PathBuf> {
     }
 
     let cfg_text = r#"[pipeline]
-translate_backend = "translategemma_4b"
-alt_translate_backend = "hy_mt"
-rewrite_backend = "translategemma_12b"
-controller_backend = "gemma3_4b"
+mode = "basic"
+ translate_backend = "hy_mt"
+# In "basic" mode, ONLY translate_backend is used.
+# Switch to mode="full" to enable these additional stages:
+# alt_translate_backend = "hy_mt"
+# rewrite_backend = "translategemma_12b"
+# controller_backend = "gemma3_4b"
 
 threads = -1
 gpu_layers = -1

@@ -102,11 +102,31 @@ impl NativeChatModel {
             .new_context(backend, ctx_params)
             .context("create model context")?;
 
-        let template = match model_ref.chat_template(None) {
-            Ok(t) => t,
-            Err(_) => {
-                let hint = cfg.template_hint.as_deref().unwrap_or("chatml");
-                LlamaChatTemplate::new(hint).context("build fallback chat template")?
+        let template = if let Some(hint) = cfg
+            .template_hint
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            match LlamaChatTemplate::new(hint) {
+                Ok(t) => t,
+                Err(err) => {
+                    eprintln!(
+                        "[warn] {}: chat template hint {hint:?} unavailable ({err}); falling back",
+                        cfg.name
+                    );
+                    match model_ref.chat_template(None) {
+                        Ok(t) => t,
+                        Err(_) => LlamaChatTemplate::new("chatml")
+                            .context("build fallback chat template")?,
+                    }
+                }
+            }
+        } else {
+            match model_ref.chat_template(None) {
+                Ok(t) => t,
+                Err(_) => LlamaChatTemplate::new("chatml")
+                    .context("build fallback chat template")?,
             }
         };
 

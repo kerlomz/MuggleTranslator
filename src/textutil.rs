@@ -36,3 +36,14 @@ pub fn auto_language_pair(excerpts: &[String]) -> (String, String) {
         ("en".to_string(), "zh".to_string())
     }
 }
+
+pub fn lang_label(code: &str) -> String {
+    let c = code.trim().to_ascii_lowercase();
+    if c.starts_with("zh") {
+        "Chinese".to_string()
+    } else if c.starts_with("en") {
+        "English".to_string()
+    } else {
+        code.trim().to_string()
+    }
+}

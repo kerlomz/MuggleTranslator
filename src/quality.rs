@@ -72,6 +72,7 @@ impl QualityHeuristics {
         self.hard_flags.iter().any(|f| {
             f == "output_identical_to_source"
                 || f.starts_with("target_script_missing_")
+                || f == "contains_ellipsis_placeholder"
                 || f == "len_ratio_too_short_extreme"
                 || f == "len_ratio_too_long_extreme"
         })
@@ -97,21 +98,51 @@ pub fn validate_translation(tu: &TranslationUnit, translated: &str) -> anyhow::R
         }
     }
 
+    // Keep strict ordering for non-NT sentinels (layout separators like <<MT_TAB>>), but allow NT
+    // tokens to reorder within the same control-token block. We still enforce NT counts exactly
+    // via `nt_token_count_mismatch` below and per-block checks under control boundaries.
     let src_sentinels: Vec<String> = ANY_SENTINEL_RE
         .find_iter(&tu.frozen_surface)
         .map(|m| m.as_str().to_string())
+        .filter(|s| !s.starts_with("<<MT_NT:"))
         .collect();
     let tgt_sentinels: Vec<String> = ANY_SENTINEL_RE
         .find_iter(translated)
         .map(|m| m.as_str().to_string())
+        .filter(|s| !s.starts_with("<<MT_NT:"))
         .collect();
     if src_sentinels != tgt_sentinels {
-        return Err(anyhow!("sentinel_sequence_mismatch"));
+        let mut idx = 0usize;
+        while idx < src_sentinels.len()
+            && idx < tgt_sentinels.len()
+            && src_sentinels[idx] == tgt_sentinels[idx]
+        {
+            idx += 1;
+        }
+        let exp = src_sentinels
+            .get(idx)
+            .map(|s| s.as_str())
+            .unwrap_or("<END>");
+        let got = tgt_sentinels
+            .get(idx)
+            .map(|s| s.as_str())
+            .unwrap_or("<END>");
+        return Err(anyhow!(
+            "sentinel_sequence_mismatch idx={idx} expected={exp} got={got}"
+        ));
     }
     let src_ctrl = control_tokens_from_text(&tu.frozen_surface);
     let tgt_ctrl = control_tokens_from_text(translated);
     if src_ctrl != tgt_ctrl {
-        return Err(anyhow!("control_token_sequence_mismatch"));
+        let mut idx = 0usize;
+        while idx < src_ctrl.len() && idx < tgt_ctrl.len() && src_ctrl[idx] == tgt_ctrl[idx] {
+            idx += 1;
+        }
+        let exp = src_ctrl.get(idx).map(|s| s.as_str()).unwrap_or("<END>");
+        let got = tgt_ctrl.get(idx).map(|s| s.as_str()).unwrap_or("<END>");
+        return Err(anyhow!(
+            "control_token_sequence_mismatch idx={idx} expected={exp} got={got}"
+        ));
     }
     // Control tokens are "layout separators" used by the DOCX projection algorithm. It's not enough
     // to preserve the token sequence; the text must not "move across" control boundaries.
@@ -120,17 +151,27 @@ pub fn validate_translation(tu: &TranslationUnit, translated: &str) -> anyhow::R
     let src_parts = split_by_control_sequence(&tu.frozen_surface);
     let tgt_parts = split_by_control_sequence(translated);
     if src_parts.len() != tgt_parts.len() {
-        return Err(anyhow!("control_token_layout_mismatch"));
+        return Err(anyhow!(
+            "control_token_layout_mismatch parts src={} tgt={}",
+            src_parts.len(),
+            tgt_parts.len()
+        ));
     }
     for (s, t) in src_parts.iter().zip(tgt_parts.iter()) {
         if is_control_token(s) {
             if s != t {
-                return Err(anyhow!("control_token_layout_mismatch"));
+                return Err(anyhow!(
+                    "control_token_layout_mismatch token expected={s} got={t}"
+                ));
             }
             continue;
         }
         if s.trim().is_empty() != t.trim().is_empty() {
-            return Err(anyhow!("control_token_layout_mismatch"));
+            return Err(anyhow!(
+                "control_token_layout_mismatch empty_block src_is_empty={} tgt_is_empty={}",
+                s.trim().is_empty(),
+                t.trim().is_empty()
+            ));
         }
     }
     for (tok, _) in &tu.nt_map {
@@ -138,6 +179,22 @@ pub fn validate_translation(tu: &TranslationUnit, translated: &str) -> anyhow::R
         let tgt_count = translated.matches(tok).count();
         if src_count != tgt_count {
             return Err(anyhow!("nt_token_count_mismatch:{tok}"));
+        }
+    }
+    // Prevent NT tokens from moving across control token boundaries (tabs/line breaks).
+    // Within a block, their order may vary; counts per token must match.
+    if !tu.nt_map.is_empty() && src_parts.len() == tgt_parts.len() {
+        for (s, t) in src_parts.iter().zip(tgt_parts.iter()) {
+            if is_control_token(s) {
+                continue;
+            }
+            for (tok, _) in &tu.nt_map {
+                let sc = s.matches(tok).count();
+                let tc = t.matches(tok).count();
+                if sc != tc {
+                    return Err(anyhow!("nt_token_control_block_mismatch:{tok}"));
+                }
+            }
         }
     }
     let src_unfrozen = unfreeze_text(&tu.frozen_surface, &tu.nt_map);
@@ -279,6 +336,12 @@ pub fn quality_heuristics(
     let bracket_notes =
         bracket_mismatch_notes(&src_plain, &tgt_plain, &mut hard_flags, &mut soft_flags);
 
+    let src_ellipsis = has_short_ellipsis(&src_plain);
+    let tgt_ellipsis = has_short_ellipsis(&tgt_plain);
+    if tgt_ellipsis && !src_ellipsis {
+        hard_flags.push("contains_ellipsis_placeholder".to_string());
+    }
+
     QualityHeuristics {
         hard_flags,
         soft_flags,
@@ -298,6 +361,21 @@ fn digit_counter(text: &str) -> HashMap<String, usize> {
         *out.entry(s).or_insert(0) += 1;
     }
     out
+}
+
+fn has_short_ellipsis(text: &str) -> bool {
+    let mut run = 0usize;
+    for ch in text.chars() {
+        if ch == '…' {
+            run = run.saturating_add(1);
+        } else {
+            if run > 0 && run < 8 {
+                return true;
+            }
+            run = 0;
+        }
+    }
+    run > 0 && run < 8
 }
 
 fn string_counter(items: impl IntoIterator<Item = String>) -> HashMap<String, usize> {
@@ -328,7 +406,7 @@ fn legal_id_candidates(text: &str) -> Vec<String> {
 fn is_compound_legal_id(id: &String) -> bool {
     let has_struct = id.contains('.') || id.contains('-') || id.contains('(') || id.contains(')');
     let has_alpha = id.chars().any(|c| c.is_ascii_alphabetic());
-    has_struct || has_alpha
+    has_struct || (has_alpha && id.len() > 1)
 }
 
 fn normalize_legal_id(id: &str) -> String {

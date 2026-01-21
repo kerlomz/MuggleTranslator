@@ -107,7 +107,10 @@ pub fn default_prompt_files() -> Vec<(&'static str, &'static str)> {
 pub const DEFAULT_TRANSLATE_A_TEXT: &str = r#"Translate from {{source_lang}} to {{target_lang}}.
 
 Rules:
+- Do NOT omit content; do NOT summarize.
+- Do NOT use ellipsis placeholders like … or ... to skip content.
 - Keep ALL tokens like <<MT_...>> unchanged.
+- Preserve all digits (0-9) exactly.
 - Output ONLY the translated segments, in the same order.
 - For each TU id, output EXACTLY:
   <<MT_SEG:000123>>
@@ -121,7 +124,10 @@ INPUT:
 pub const DEFAULT_TRANSLATE_B_TEXT: &str = r#"Translate from {{source_lang}} to {{target_lang}}.
 
 Rules:
+- Do NOT omit content; do NOT summarize.
+- Do NOT use ellipsis placeholders like … or ... to skip content.
 - Keep ALL tokens like <<MT_...>> unchanged.
+- Preserve all digits (0-9) exactly.
 - Output ONLY the translated segments, in the same order.
 - For each TU id, output EXACTLY:
   <<MT_SEG:000123>>
@@ -138,9 +144,19 @@ Return ONLY the fixed translation.
 Constraints:
 - Do NOT omit content; do NOT summarize.
 - Do NOT add new information.
+- Do NOT use ellipsis placeholders like … or ... to skip content.
 - Preserve ALL tokens like <<MT_...>> EXACTLY and keep their order unchanged.
 - Preserve all digits (0-9) exactly.
 - Ensure the output is in {{target_lang}} (do not leave it in {{source_lang}}).
+
+Must-keep tokens (copy exactly; keep order):
+{{must_keep_tokens}}
+
+NT map (token = original; you may copy originals, but do NOT translate them):
+{{nt_map}}
+
+Validation error (previous output failed):
+{{validation_error}}
 
 Language: {{source_lang}} -> {{target_lang}}
 

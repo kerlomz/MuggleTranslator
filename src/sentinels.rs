@@ -54,6 +54,20 @@ pub fn slot_token(slot_id: usize) -> String {
     format!("<<MT_SLOT:{slot_id:0SLOT_ID_WIDTH$}>>")
 }
 
+pub fn sentinel_sequence(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    ANY_SENTINEL_RE
+        .find_iter(text)
+        .map(|m| m.as_str().to_string())
+        .collect()
+}
+
+pub fn must_keep_tokens(text: &str) -> String {
+    sentinel_sequence(text).join(" ")
+}
+
 pub fn control_tokens_from_text(text: &str) -> Vec<String> {
     if text.is_empty() {
         return vec![];

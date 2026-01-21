@@ -18,6 +18,13 @@ pub struct AppConfig {
 
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct PipelineSection {
+    /// Pipeline mode: "basic" or "full".
+    ///
+    /// - basic: translate slot_texts (+ optional paragraph preview); fastest, minimal models.
+    /// - full: enable multi-model + controller + patch loops.
+    #[serde(default)]
+    pub mode: Option<String>,
+
     #[serde(default)]
     pub translate_backend: Option<String>,
     #[serde(default)]

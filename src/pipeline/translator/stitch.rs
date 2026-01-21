@@ -228,6 +228,12 @@ impl TranslatorPipeline {
             let raw = model.chat(None, &prompt, 1200, 0.2, 0.9, Some(40), Some(1.05), false)?;
             let mut out = cleanup_model_text(&raw);
             if validate_translation(&tus[idx], &out).is_err() {
+                let must_keep_tokens = crate::sentinels::must_keep_tokens(&source);
+                let validation_error = validate_translation(&tus[idx], &out)
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "patch_invalid".to_string());
+                let nt_map = crate::freezer::render_nt_map_for_prompt(&tus[idx].nt_map);
                 let repaired = self.repair_translation(
                     &mut model,
                     &repair_tmpl,
@@ -235,6 +241,9 @@ impl TranslatorPipeline {
                     target_lang,
                     &source,
                     &out,
+                    &must_keep_tokens,
+                    &validation_error,
+                    &nt_map,
                 )?;
                 out = repaired;
             }
@@ -254,6 +263,12 @@ impl TranslatorPipeline {
             for attempt in 0..=1 {
                 if validate_translation(&tus[idx], &out).is_err() {
                     if attempt == 0 {
+                        let must_keep_tokens = crate::sentinels::must_keep_tokens(&source);
+                        let validation_error = validate_translation(&tus[idx], &out)
+                            .err()
+                            .map(|e| e.to_string())
+                            .unwrap_or_else(|| "patch_invalid".to_string());
+                        let nt_map = crate::freezer::render_nt_map_for_prompt(&tus[idx].nt_map);
                         let repaired = self.repair_translation(
                             &mut model,
                             &repair_tmpl,
@@ -261,6 +276,9 @@ impl TranslatorPipeline {
                             target_lang,
                             &source,
                             &out,
+                            &must_keep_tokens,
+                            &validation_error,
+                            &nt_map,
                         )?;
                         out = repaired;
                         continue;
@@ -273,6 +291,9 @@ impl TranslatorPipeline {
                         break;
                     }
                     Err(_) if attempt == 0 => {
+                        let must_keep_tokens = crate::sentinels::must_keep_tokens(&source);
+                        let reason = "slot_projection_failed".to_string();
+                        let nt_map = crate::freezer::render_nt_map_for_prompt(&tus[idx].nt_map);
                         let repaired = self.repair_translation(
                             &mut model,
                             &repair_tmpl,
@@ -280,6 +301,9 @@ impl TranslatorPipeline {
                             target_lang,
                             &source,
                             &out,
+                            &must_keep_tokens,
+                            &reason,
+                            &nt_map,
                         )?;
                         out = repaired;
                     }

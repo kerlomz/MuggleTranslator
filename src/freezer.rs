@@ -18,6 +18,8 @@ static FREEZE_RE: Lazy<Regex> = Lazy::new(|| {
     let win_path = r#"(?:[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*)"#;
     let placeholder = r"(?:\{[^{}\r\n]{1,100}\}|\$\{[^{}\r\n]{1,100}\})";
     let percent_slot = r"%\d+";
+    let time_hhmm = r"\b\d{1,2}:\d{2}\b";
+    let number_plain = r"\b\d+\b";
     // Preserve structured identifiers such as "4.1(b)", "1-2.3", "(i)/(ii)", and "IV".
     let clause_ref = r"(?:\b\d+(?:[.,]\d+)+(?:-\d+(?:[.,]\d+)*)?(?:\([A-Za-z0-9]+\))*\b|\b\d+(?:-\d+)+(?:\([A-Za-z0-9]+\))*\b|\b\d+\([A-Za-z0-9]+\)(?:\([A-Za-z0-9]+\))*\b|\b[IVXLCDM]{1,8}\b)";
     let enum_num = r"\(\d{1,3}\)";
@@ -32,20 +34,25 @@ static FREEZE_RE: Lazy<Regex> = Lazy::new(|| {
     let var_marker = r"\b[XYZ]\b";
 
     let pat = format!(
-        "({trademark_token}|{other_script_run}|{url}|{email}|{win_path}|{placeholder}|{percent_slot}|{clause_ref}|{enum_num}|{enum_roman}|{enum_alpha}|{dot_leader}|{underscore_leader}|{dash_leader}|{var_marker})"
+        "({trademark_token}|{other_script_run}|{url}|{email}|{win_path}|{placeholder}|{percent_slot}|{clause_ref}|{enum_num}|{enum_roman}|{enum_alpha}|{dot_leader}|{underscore_leader}|{dash_leader}|{time_hhmm}|{number_plain}|{var_marker})"
     );
     Regex::new(&pat).expect("freeze regex")
 });
 
 pub fn freeze_text(text: &str) -> FreezeResult {
     let mut nt_map: HashMap<String, String> = HashMap::new();
+    let mut rev_map: HashMap<String, String> = HashMap::new();
     let mut mask: Vec<FreezeMaskSpan> = Vec::new();
     let mut next_id: usize = 1;
 
     let mut add_token = |original: &str| -> String {
+        if let Some(tok) = rev_map.get(original) {
+            return tok.clone();
+        }
         let token = nt_token(next_id);
         next_id += 1;
         nt_map.insert(token.clone(), original.to_string());
+        rev_map.insert(original.to_string(), token.clone());
         token
     };
 
@@ -111,4 +118,66 @@ pub fn unfreeze_text(text: &str, nt_map: &HashMap<String, String>) -> String {
             nt_map.get(tok).cloned().unwrap_or_else(|| tok.to_string())
         })
         .into_owned()
+}
+
+pub fn normalize_nt_tokens(
+    source_frozen: &str,
+    nt_map: &HashMap<String, String>,
+    text: &str,
+) -> String {
+    if nt_map.is_empty() || text.is_empty() {
+        return text.to_string();
+    }
+
+    let mut out = text.to_string();
+    for (tok, original) in nt_map {
+        let expected = source_frozen.matches(tok).count();
+        if expected == 0 {
+            continue;
+        }
+        let current = out.matches(tok).count();
+        if current < expected && !original.is_empty() {
+            out = replace_n(&out, original, tok, expected - current);
+        } else if current > expected {
+            out = replace_n(&out, tok, original, current - expected);
+        }
+    }
+    out
+}
+
+pub fn render_nt_map_for_prompt(nt_map: &HashMap<String, String>) -> String {
+    if nt_map.is_empty() {
+        return String::new();
+    }
+    let mut items: Vec<(&String, &String)> = nt_map.iter().collect();
+    items.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let mut out = String::new();
+    for (tok, original) in items {
+        out.push_str(tok);
+        out.push_str(" = ");
+        out.push_str(original);
+        out.push('\n');
+    }
+    out.trim().to_string()
+}
+
+fn replace_n(text: &str, needle: &str, replacement: &str, n: usize) -> String {
+    if n == 0 || needle.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len().saturating_add(n * replacement.len()));
+    let mut cursor = 0usize;
+    let mut remaining = n;
+    while remaining > 0 {
+        let Some(rel) = text[cursor..].find(needle) else {
+            break;
+        };
+        let i = cursor + rel;
+        out.push_str(&text[cursor..i]);
+        out.push_str(replacement);
+        cursor = i + needle.len();
+        remaining -= 1;
+    }
+    out.push_str(&text[cursor..]);
+    out
 }

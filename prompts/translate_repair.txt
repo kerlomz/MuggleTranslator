@@ -4,9 +4,19 @@ Return ONLY the fixed translation.
 Constraints:
 - Do NOT omit content; do NOT summarize.
 - Do NOT add new information.
+- Do NOT use ellipsis placeholders like … or ... to skip content.
 - Preserve ALL tokens like <<MT_...>> EXACTLY and keep their order unchanged.
 - Preserve all digits (0-9) exactly.
 - Ensure the output is in {{target_lang}} (do not leave it in {{source_lang}}).
+
+Must-keep tokens (copy exactly; keep order):
+{{must_keep_tokens}}
+
+NT map (token = original; you may copy originals, but do NOT translate them):
+{{nt_map}}
+
+Validation error (previous output failed):
+{{validation_error}}
 
 Language: {{source_lang}} -> {{target_lang}}
 

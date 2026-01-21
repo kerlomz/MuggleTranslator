@@ -17,15 +17,17 @@ use crate::models::native::{NativeChatModel, NativeModelConfig};
 use crate::progress::ConsoleProgress;
 use crate::quality::must_extract_json_obj;
 use crate::sentinels::parse_slot_output;
-use crate::textutil::{auto_language_pair, is_trivial_sentinel_text};
+use crate::textutil::{auto_language_pair, is_trivial_sentinel_text, lang_label};
 use llama_cpp_2::llama_backend::LlamaBackend;
 
+use super::config::PipelineMode;
 use super::docmap::build_para_slot_units;
 use super::memory::{build_memory, write_memory_file, ParaNotes};
 use super::prompts::render_template;
 use super::trace::TraceWriter;
 use super::PipelineConfig;
 
+mod basic;
 mod notes;
 mod segmented;
 mod stitch;
@@ -51,6 +53,13 @@ impl TranslatorPipeline {
     }
 
     pub fn translate_docx(&mut self, input: &Path, output: &Path) -> anyhow::Result<()> {
+        match self.cfg.mode {
+            PipelineMode::Basic => self.translate_docx_basic(input, output),
+            PipelineMode::Full => self.translate_docx_full(input, output),
+        }
+    }
+
+    fn translate_docx_full(&mut self, input: &Path, output: &Path) -> anyhow::Result<()> {
         self.progress
             .info(format!("Read DOCX: {}", input.display()));
         fs::create_dir_all(self.trace.dir())
@@ -242,8 +251,10 @@ impl TranslatorPipeline {
         )?;
 
         // Global stitch audit + patch (2 rounds max)
-        if let Some(agent) = self.cfg.controller_backend.clone() {
-            let rewrite_backend = self.cfg.rewrite_backend.clone();
+        if let (Some(agent), Some(rewrite_backend)) = (
+            self.cfg.controller_backend.clone(),
+            self.cfg.rewrite_backend.clone(),
+        ) {
             self.run_stitch_audit_and_patch(
                 &agent,
                 &rewrite_backend,
@@ -493,17 +504,26 @@ impl TranslatorPipeline {
         target_lang: &str,
         source_frozen: &str,
         bad: &str,
+        must_keep_tokens: &str,
+        validation_error: &str,
+        nt_map: &str,
     ) -> anyhow::Result<String> {
+        let source_lang_label = lang_label(source_lang);
+        let target_lang_label = lang_label(target_lang);
         let prompt = render_template(
             repair_tmpl,
             &[
-                ("source_lang", source_lang),
-                ("target_lang", target_lang),
+                ("source_lang", &source_lang_label),
+                ("target_lang", &target_lang_label),
                 ("source", source_frozen),
                 ("bad", bad),
+                ("must_keep_tokens", must_keep_tokens),
+                ("validation_error", validation_error),
+                ("nt_map", nt_map),
             ],
         );
-        let out = model.chat(None, &prompt, 900, 0.12, 0.9, Some(40), Some(1.05), false)?;
+        let max_tokens = ((source_frozen.len() as u32) / 2).clamp(512, 4096);
+        let out = model.chat(None, &prompt, max_tokens, 0.1, 0.9, Some(40), Some(1.05), false)?;
         Ok(cleanup_model_text(&out))
     }
 
@@ -612,11 +632,16 @@ impl TranslatorPipeline {
             "Autosave {done}/{total}: {}",
             progress_path.display()
         ));
+        let progress_text_json = progress_path.with_extension("text.json");
         fs::write(
             autosave_text_json,
             serde_json::to_vec_pretty(text).context("serialize autosave text json")?,
         )
         .with_context(|| format!("write autosave text json: {}", autosave_text_json.display()))?;
+        let _ = fs::write(
+            &progress_text_json,
+            serde_json::to_vec_pretty(text).context("serialize progress text json")?,
+        );
         merge_mask_json_and_offsets(mask_json, offsets_json, autosave_text_json, &progress_path)
     }
 }

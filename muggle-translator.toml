@@ -1,9 +1,13 @@
 [pipeline]
+# Pipeline mode: "basic" (fast; translate_backend only) or "full" (multi-model + agent loop).
+mode = "basic"
+
 # Backend names reference keys under [models.backends.*]
-translate_backend = "translategemma_4b"
-alt_translate_backend = "hy_mt"
-rewrite_backend = "translategemma_12b"
-controller_backend = "gemma3_4b"
+translate_backend = "hy_mt"
+# In "basic" mode, these are ignored. Switch to mode="full" to enable:
+# alt_translate_backend = "hy_mt"
+# rewrite_backend = "translategemma_12b"
+# controller_backend = "gemma3_4b"
 
 # Default llama.cpp runtime settings (can be overridden per-backend below).
 threads = -1
